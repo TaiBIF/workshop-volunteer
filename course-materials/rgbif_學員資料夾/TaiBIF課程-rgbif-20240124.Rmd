@@ -1,0 +1,453 @@
+---
+title: "TaiBIF課程-rgbif-20240124"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# 生物多樣性資料應用課程 - 使用 `rgbif` 套件
+
+##### tags: `資料應用` `資料清理` `API` `GBIF` `TaiBIF`
+
+</br >
+
+### 📒 此教材來自 2024/01 所舉辦的「[TaiBIF](https://portal.taibif.tw/) 生物多樣性資料應用工作坊」
+#### **Created by:** 何芷蔚 [Daphne Hoh](https://orcid.org/0000-0002-7810-1034), 吳俊毅 Junyi Wu
+#### **Created:** 2023-09-02
+#### **Last modified:** 2024-01-17
+
+</br >
+
+## 🚩 課程目標
+#### 1. 學會怎麼用 R 套件 [*`rgbif`*](https://docs.ropensci.org/rgbif/) 下載 GBIF 資料
+#### 2. 了解 GBIF 所下載的資料可能會出現的品質問題 (potential data quality issue)
+#### 3. 如何清理有品質疑慮的資料
+#### 4. 畫出物種出現紀錄分布圖
+#### 5. 如何引用所下載的資料
+
+</br >
+
+## 🪄 課前準備
+#### 1. 此課程教材們[連結](https://drive.google.com/drive/folders/1se5qho_lbFC6HnecmWc0lVenv922NCjf?usp=drive_link)
+#### 2. 這次課堂裡所使用的工具版本：
+  + R 版本：4.3.2
+  + *`rgbif`* 版本：3.7.9
+    
+</br >
+
+## (1) 💻 環境準備
+```{r, message = F}
+# 雙引號之間的文字要改為自己的桌面路徑
+setwd("/Users/taibif/Desktop/") # Mac
+setwd("C:/Users/taibif/Desktop/") # Window
+
+.packs <- c("rgbif", "rnaturalearth", "devtools", "tidyverse", "CoordinateCleaner", 
+            "sf", "data.table", "ggplot2", "ggmap")
+```
+
+
+```{r, message = F}
+install.packages(.packs)
+sapply(.packs, require, character.only = T)
+
+# 下列套件需要使用 devtools 來裝 
+devtools::install_github("ropensci/rnaturalearthhires")
+library(rnaturalearthhires)
+
+# 跑出此 Rmd 教材的電腦與 R 環境設定
+sessionInfo()
+```
+
+</br >
+
+## (2) 🔍 使用 rgbif 套件來下載 GBIF 的資料
+### 2.1 - 找出物種的 taxonKey
+#### 這次的課堂範例，我們來看臺灣的原生物種—臺灣杉 *Taiwania cryptomerioides*
+```{r}
+# 方法（一）：到 GBIF 網站找 https://www.gbif.org/species/"XXXXXXX"
+taxonKey <- 5284272
+
+# 方法（二）：
+name_backbone(name = "Taiwania cryptomerioides", rank = "species") %>% 
+  data.frame()
+```
+#### + 注意 `status` 欄位檢查輸入的學名是否有效
+#### + 注意 `matchType` 欄位檢查輸入的學名是否為你要找的物種或是否拼錯
+#### + 範例參考：
+####    + name_backbone(name = "Magnoliophyta") # `status` 是 'Synonym' (同物異名)
+####    + name_backbone(name = "Aegithalos caudatus") # `status` 是 'Doubtful' (有疑慮的)
+```{r}
+# 上面檢查沒問題後，存入 taxonKey
+taxonKey <- name_backbone(name = "Taiwania cryptomerioides", rank = "species") %>% 
+  pull(usageKey)
+```
+
+</br >
+
+### 2.2 - 針對 taxonKey 下載出現紀錄
+```{r, message = F}
+# 要登入 GBIF 帳號才能下載資料
+gbif_download_key <- occ_download(pred("taxonKey", taxonKey), # 下載此 taxonKey 的出現紀錄
+                                  format = "SIMPLE_CSV",
+                                  user = "yourGBIFuserID", # 輸入你的 GBIF User ID
+                                  pwd = "yourPW", # 密碼
+                                  email = "yourEmail@mail.com") # 用來註冊 GBIF 帳號的 email
+
+# 查看下載狀態
+# 如果資料很多，會需要等一陣子
+occ_download_wait(gbif_download_key)
+
+# 直接讀進 R 成 data frame
+# 也另存一個壓縮檔到本機路徑
+gbif_download <- occ_download_get(gbif_download_key, overwrite = T) %>% 
+  occ_download_import()
+
+head(gbif_download, 5) 
+colnames(gbif_download) # 看有什麼欄位
+```
+#### + 看各欄位代表什麼：Darwin Core (DwC) Terms https://dwc.tdwg.org/list/
+#### + 完整的 DwC Terms 有超過 350 個
+#### + rgbif 的 occ_download_get 共有 50 個
+#### + 有一些欄位例如：gbifID, lastInterpreted, mediaType, issue 等是 GBIF 詮釋資料，不是 DwC
+
+</br >
+
+## (3)️ 🧭 資料點位視覺化
+#### 臺灣杉 *Taiwania cryptomerioides* 是台灣特有種，我們先來看一下資料在地圖上的分布
+```{r, message = F}
+world.map <- ne_countries(returnclass = "sf") # 下載世界地圖
+
+# 下載的資料在世界的分布
+ggplot() +
+  geom_sf(data = world.map) +
+  geom_point(data = gbif_download,
+             aes(x = decimalLongitude, # 經度
+                 y = decimalLatitude), # 緯度
+             shape = "+",
+             color = "red") +
+  theme_bw()
+```
+```{r, message = F}
+tw.map <- ne_countries(country = "Taiwan", scale = "large", returnclass = "sf") # 下載臺灣地圖
+
+# 下載的資料在臺灣的分布
+ggplot() +
+  geom_point(data = gbif_download,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +
+  geom_sf(data = tw.map)
+  theme_bw()
+  #繪製出來的地圖，很明顯的資料分布有大量都不再臺灣本島內
+```
+
+#### 臺灣杉是台灣特有種，為什麼會在國外有點位資料呢？
+#### 1. 在國外是典藏標本
+#### 2. 變成國外的外來種？！
+#### 不管什麼原因，這些不是我們想看的資料，所以針對這些資料做清理
+
+</br >
+
+## (4) 🚧 資料清理
+#### ⚠️ 注意 ⚠️ 清理資料的步驟沒有統一的作法
+#### 所有清理步驟都會以你的研究目的與要做的分析方式做調整
+#### 此教材裡提到的清理步驟是 GBIF 建議可以注意的地方
+
+</br >
+
+### 4.1 - 我只想要原生 & 野生的出現紀錄，去除典藏資料！
+```{r, message = F}
+table(gbif_download$basisOfRecord) # basisOfRecord = 資料類型
+table(gbif_download$establishmentMeans) # establishmentMeans = 原生狀態。臺灣杉這例子剛好不需要清這個，但別的資料可能需要。
+
+clean.step.1 <- gbif_download %>%
+  filter(!basisOfRecord %in% c("FOSSIL_SPECIMEN", "LIVING_SPECIMEN", "PRESERVED_SPECIMEN")) %>% 
+  filter(!establishmentMeans %in% c("MANAGED", "INTRODUCED", "INVASIVE", "NATURALISED"))
+
+
+print(paste0(nrow(gbif_download) - nrow(clean.step.1), " records deleted; ",
+             nrow(clean.step.1), " records remaining."))
+
+
+# 來看一下資料清除前與後的地理分布
+ggplot() +
+  geom_sf(data = world.map) +
+  geom_point(data = gbif_download,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "blue") +  # 被移除的資料
+  geom_point(data = clean.step.1,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +  # 保留下來的資料
+  theme_bw()
+```
+
+</br >
+
+### 4.2 - 把一些有明顯地理錯誤的資料去除
+#### 使用方便的 *`CoordinateCleaner`* 套件
+```{r}
+# 以下註解分別為清理的部分
+clean.step.2 <- clean.step.1 %>% 
+  filter(!is.na(decimalLatitude), !is.na(decimalLongitude), # 無經緯度資訊
+         countryCode == "TW") %>% # 保留在台灣的點位
+  cc_dupl() %>% # 經緯度點位重複
+  cc_zero() %>% # 經緯度為 0
+  cc_equ() %>% # 經緯度為同數值
+  cc_val() %>% # 經緯度無效 (緯度 > 90 & < -90; 經度 > 180 & < -180)
+  cc_sea() %>% # 海上
+  cc_cen(buffer = 5) # 國家的中間點，數字單位是公里
+
+print(paste0(nrow(clean.step.1) - nrow(clean.step.2), " records deleted; ",
+             nrow(clean.step.2), " records remaining."))  
+```
+```{r, message = F}
+# 來看一下資料清除前與後的地理分布
+ggplot() +
+  geom_sf(data = world.map) +
+  geom_point(data = clean.step.1,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "blue") +  # 被移除的資料
+  geom_point(data = clean.step.2,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +  # 保留下來的資料
+  theme_bw()
+```
+
+#### 移除成功！我們接下來看台灣的資料就好
+```{r, message = F}
+ggplot() +
+  geom_sf(data = tw.map) +
+  geom_point(data = clean.step.2,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +
+  theme_bw()
+```
+
+</br >
+
+### 4.3 - 移除座標不確定性很高的資料
+#### 如果物種的實際點位對接下來要做的分析很重要
+#### 比如說：用來跑物種分布模型
+#### 那必須針對 coordinateUncertaintyInMeters (座標不確定性) 欄位做適當的清理
+```{r}
+table(gbif_download$coordinateUncertaintyInMeters)
+
+clean.step.3 <- clean.step.2 %>% 
+  filter(!is.na(coordinateUncertaintyInMeters) |  # 移除空值
+           coordinateUncertaintyInMeters < 1000)  # 保留 < 1000 公尺以下的
+
+print(paste0(nrow(clean.step.2) - nrow(clean.step.3), " records deleted; ",
+             nrow(clean.step.3), " records remaining." ))  
+```
+
+</br >
+
+### 4.4 - 我對很舊或無年份的紀錄有疑慮，移除！
+#### 在 GBIF 裡，很舊的紀錄通常是標本
+```{r}
+# 視情況自己定義該保留什麼年份
+table(clean.step.3$year)
+
+clean.step.4 <- clean.step.3 %>% 
+  filter(year > 1980 & year < 2025) # 有些資料也會出現“未來”年份，移除
+```
+
+</br >
+
+### 4.5 - 最後檢視到底被移除多少有疑慮的資料
+```{r, message = F}
+ggplot() +
+  geom_sf(data = tw.map) +
+  geom_point(data = gbif_download,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "blue") +  # 所有被移除的資料
+  geom_point(data = clean.step.4,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +  # 清理後，保留下來的資料
+  theme_bw() +
+  coord_sf(xlim = st_bbox(tw.map)[c(1,3)],
+           ylim = st_bbox(tw.map)[c(2,4)])
+```
+
+### 4.6 - 清理後，剩下的資料
+```{r}
+ggplot() +
+  geom_sf(data = tw.map) +
+  geom_point(data = clean.step.4,
+             aes(x = decimalLongitude,
+                 y = decimalLatitude),
+             shape = "+",
+             color = "red") +
+  theme_bw()
+```
+
+#### 清理後能用的資料從剛開始的 1,123 筆到只剩 89 筆 
+#### 當然也可能是因為對資料品質的要求太嚴格了
+#### 再視情況自己調整啦～ 
+
+</br >
+
+## (5) 🗺 來個圖層 + 網格教學
+### 下載 GBIF 特定範圍的物種出現紀錄
+```{r}
+location <- "POLYGON((121.61304 25.04929, 121.61085 25.0495, 121.60583 25.04833, 121.60672 25.04555, 121.60627 25.04138, 121.60915 25.03876, 121.61668 25.03708, 121.61675 25.03795, 121.61759 25.03972, 121.61724 25.04091, 121.61682 25.04208, 121.61624 25.04317, 121.61507 25.04574, 121.61554 25.0474, 121.61563 25.0488, 121.61304 25.04929))"
+
+
+# 另一種更快速篩選、選擇特定範圍與下載 GBIF 資料的方法
+gbif_download_key <- occ_download(pred_within(location),
+                                  pred_or(pred_lt("coordinateUncertaintyInMeters", 1000),
+                                          pred_notnull("coordinateUncertaintyInMeters")),
+                                  format = "SIMPLE_CSV",
+                                  user = "yourGBIFuserID", # 輸入你的 GBIF User ID
+                                  pwd = "yourPW", # 密碼
+                                  email = "yourEmail@mail.com") # 用來註冊 GBIF 帳號的 email
+
+# 下載並解壓縮
+gbif_download_metadata <- occ_download_wait(gbif_download_key)
+gbif_download_path <- "./gbif_download.zip" # 指定下載檔案的路徑
+download.file(gbif_download_metadata$downloadLink, gbif_download_path) # 下載到本機
+unzip(gbif_download_path) # 在本機壓縮下載檔
+
+GBIF_data <- fread(sprintf("%s.csv", gbif_download_metadata$key), 
+                   sep = "\t", fill = T, encoding = "UTF-8", colClasses = "character", quote = "")
+
+
+# 將 WKT 轉換為 sf object
+sfc <- st_as_sfc(location)
+polygon_sf <- st_sf(geometry = sfc)
+
+# 劃多邊形
+gg <- ggplot(data = polygon_sf) +
+  geom_sf(data = polygon_sf,
+          color = "black", size = 0.2, inherit.aes = F, alpha = 0.3)
+print(gg)
+
+# 設定原始坐標系統 (先告訴 R 預設圖層是是 WGS84, EPSG:4326)
+st_crs(polygon_sf) <- 4326
+
+# 轉換到 TWD97 (EPSG:3826)。繪製網格必須要讓坐標系統轉換成二度分帶才精準
+polygon_sf_twd97 <- st_transform(polygon_sf, 3826)
+
+
+# 創建 100m x 100m 的網格
+grid <- st_make_grid(polygon_sf_twd97, cellsize = c(100, 100)) %>% 
+  st_as_sf()
+
+# 畫出 grid
+gg_grid <- ggplot(data = grid) +
+  geom_sf(data = grid,
+          color = "black", size = 0.2, inherit.aes = F, alpha = 0.3)
+print(gg_grid)
+
+# 用產生的 Polygon 挑選網格
+intersects_result <- st_intersects(grid, polygon_sf_twd97)
+selected_grids <- grid[unlist(lapply(intersects_result, length)) > 0, ]
+
+# 畫出篩選 grid 與多邊形重疊圖
+gg_grid <- ggplot() +
+  geom_sf(data = selected_grids, fill = "red", alpha = 0.5) + # 繪製 selected_grids
+  geom_sf(data = polygon_sf_twd97, fill = "lightblue") + # 繪製 polygon_sf_twd97
+  theme_minimal()
+print(gg_grid)
+
+# 將 GBIF_data 根據座標轉成 Point polygon，因座標本身是WGS84，故投影成WGS84
+GBIF_sf <- st_as_sf(GBIF_data, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+
+# 畫出 GBIF 點位圖
+gg_point <- ggplot() +
+  geom_sf(data = GBIF_sf)
+print(gg_point)
+
+# 畫出 GBIF 點位以及篩選 grid 重疊圖
+gg_grid_point <- ggplot() +
+  geom_sf(data = selected_grids, fill = "red", alpha = 0.5) + # 繪製 selected_grids
+  geom_sf(data = GBIF_sf)+
+  theme_minimal()
+print(gg_grid_point)
+
+
+# 因為 GBIF 的資料的座標系統都是 WGS84，將點位圖層轉成 TWD97
+GBIF_sf_TWD97 <- st_transform(GBIF_sf, crs = 3826)
+
+# 產生邏輯矩陣，判斷兩個圖層有多少資料有交集
+points_per_grid <- st_intersects(GBIF_sf_TWD97, selected_grids, sparse = F)
+
+# 將邏輯舉證轉換成數列，計算每個網格有多少點位數量
+count_points <- apply(points_per_grid, 2, sum)
+selected_grids$count <- count_points
+
+# 繪製熱點圖
+gg <- ggplot(data = selected_grids) +
+  geom_sf(aes(fill = count), color = "black", size = 0.2) +
+  scale_fill_gradientn(colors = c("white", "blue", "red"), 
+                       values = scales::rescale(c(0, 1, max(selected_grids$count, na.rm = T))),
+                       na.value = "white", 
+                       name = "Count") +
+  theme_minimal() +
+  labs(title = "Selected Grids based on Count", x = "Longitude", y = "Latitude")
+print(gg)
+
+
+# 將完成的網格輸出成 shapefile，可以在 GIS 軟體上操作編輯
+# st_write(selected_grids, "output\\RGBIF_result.shp")
+```
+
+</br >
+
+## (6) 🌞 引用方法
+```{r}
+gbif_download_key
+
+print(gbif_citation(occ_download_meta(gbif_download_key))$download)
+```
+
+</br >
+
+### 🐒 其他
+#### 如果想試別的物種資料：
+```{r}
+#name_backbone(name = "Macaca cyclopis", rank = "species") # 臺灣獼猴
+#name_backbone(name = "Odorrana swinhoana", rank = "species") # 斯文豪氏蛙
+#name_backbone(name = "Yuhina brunneiceps", rank = "species") # 冠羽畫眉
+#name_backbone(name = "Alpinia uraiensis", rank = "species") # 烏來月桃
+```
+
+</br >
+
+### 📚 延伸閱讀
+1. GBIF interpreted data - [Issues and Flags](https://data-blog.gbif.org/post/issues-and-flags/) 
+2. List of [Darwin Core Term](https://dwc.tdwg.org/list/)
+3. Data blog - [GBIF API beginners guide](https://data-blog.gbif.org/post/gbif-api-beginners-guide/)
+4. Data blog - [GBIF Species API](https://data-blog.gbif.org/post/gbif-species-api/)
+5. GBIF 出版文件 - [資料品質原則](https://www.gbif.org/document/80509/principles-of-data-quality) ([英](https://assets.ctfassets.net/uo17ejk9rkwj/2gupj7dJIw62UeOUYiqSsm/0a4bb732bd7fd8cf28f7703dc20a43ba/Data_Quality_-_ENGLISH.pdf)/[中譯](https://assets.ctfassets.net/uo17ejk9rkwj/3IabOUm6FWoikQKceYIQ8g/59fa78644598800faa096c157ce36b03/Principles_20of_20Data_20Quality_20-_20Chinese.pdf))
+6. GBIF 出版文件 - [原始物種與物種出現紀錄資料](https://www.gbif.org/document/80528/principles-and-methods-of-data-cleaning-primary-species-and-species-occurrence-data)
+
+</br >
+
+### 💡 參考
+1. **Main reference for this course material / Modified from:** GBIF Secretariat (2021) GBIF Biodiversity Data Use Course. 6th edition. GBIF Secretariat: Copenhagen. https://doi.org/10.15468/ce-wkk4-2w26. 
+
+2. Chamberlain S, Barve V, Mcglinn D, Oldoni D, Desmet P, Geffert L, Ram K (2023). rgbif: Interface to the Global Biodiversity Information Facility API. R package version 3.7.9, https://CRAN.R-project.org/package=rgbif.
+
+</br >
+
+***
+> This document is part of a course materials developed for [TaiBIF](https://portal.taibif.tw/) Data Use Workshop (2024-01-24).
+
